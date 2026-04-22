@@ -1,8 +1,3 @@
-/*
-    =========================================================================
-    =========================================================================
-*/
-
 /******************************** INCLUDE FILES *******************************/
 #include <stdio.h>
 #include <unistd.h>
@@ -13,10 +8,12 @@
 #include <string.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #include <arpa/inet.h> 
 
-#include "tcp_server.h"  /* tcp server classes */
+#include "tcp_server.h"
+#include "queue.h"
 /******************************** LOCAL DEFINES *******************************/
 
 #define TCP_SERVER_BACKLOG  10
@@ -28,6 +25,11 @@ struct _tcp_server_t {
 
     pthread_t *workers;
     int workers_n;
+
+    conn_handler_t conn_handler;
+    queue_t *conn_queue;
+    pthread_mutex_t conn_mutex;
+    pthread_cond_t  conn_cond;
 };
 
 /************************* LOCAL FUNCTIONS DEFINITIONS ************************/
@@ -45,6 +47,38 @@ static void tcp_server_sig_hndlr(int signum)
     fprintf(stderr, "Server shuting down...\n");
 
 }
+
+static void *worker_thread(void *arg)
+{
+    tcp_server_t *self = (tcp_server_t *)arg;
+
+    while (!SERVER_STOP)
+    {
+        /* Worker thread main loop */
+        int conn;
+        int ret = 0;
+
+        pthread_mutex_lock(&self->conn_mutex);
+
+        while (is_empty(self->conn_queue) && !SERVER_STOP) {
+            pthread_cond_wait(&self->conn_cond, &self->conn_mutex);
+        }
+        if (SERVER_STOP) {
+            pthread_mutex_unlock(&self->conn_mutex);
+            break;
+        }
+        ret = dequeue(self->conn_queue, &conn);
+        pthread_mutex_unlock(&self->conn_mutex);
+        if (ret == -1)
+        {
+            continue;
+        }
+        fprintf(stderr, "Worker %lu handling connection %d\n", pthread_self(), conn);
+        self->conn_handler(conn);
+    }
+
+    return NULL;
+}
 /***********************************  METHODS *********************************/
 
 //  --------------------------------------------------------------------------
@@ -57,7 +91,7 @@ static void tcp_server_sig_hndlr(int signum)
  *     On success new tcp_server object, or NULL if the new tcp server could not be created.
  */
 tcp_server_t *
-tcp_server_new (const char *ipv4, int server_port, int workers_n)
+tcp_server_new (const char *ipv4, int server_port, int workers_n, conn_handler_t conn_handler)
 {
     tcp_server_t *self = (tcp_server_t *) malloc (sizeof (tcp_server_t));
     assert (self);
@@ -117,6 +151,10 @@ tcp_server_new (const char *ipv4, int server_port, int workers_n)
         free(self);
         return NULL;
     }
+    self->conn_queue = queue_new();
+    pthread_mutex_init(&self->conn_mutex, NULL);
+    pthread_cond_init(&self->conn_cond, NULL);
+    self->conn_handler = conn_handler;
 
     return self;
 }
@@ -152,6 +190,8 @@ tcp_server_destroy (tcp_server_t **self_p)
         {
             close(self->sock_fd);
         }
+        free(self->workers);
+        queue_destroy(self->conn_queue);
 
         //  Free object itself
         free (self);
@@ -176,10 +216,7 @@ tcp_server_run(tcp_server_t *self)
     assert(self);
 
     int i = 0;
-    int nsel = 0;
     int conn = -1;
-
-    fd_set rset;
 
     struct sockaddr_in src_addr;
     socklen_t src_addr_len = sizeof(src_addr);
@@ -196,6 +233,11 @@ tcp_server_run(tcp_server_t *self)
     if (fcntl(self->sock_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
         perror("fcntl F_SETFL O_NONBLOCK");
         return;
+    }
+
+    for (i = 0; i < self->workers_n; i++)
+    {
+        pthread_create(&self->workers[i], NULL, worker_thread, self);
     }
 
     /* Start the server loop */
@@ -224,7 +266,13 @@ tcp_server_run(tcp_server_t *self)
         }
         fprintf(stderr, "New connection from: %s:%d\n", inet_ntoa(src_addr.sin_addr),
                 ntohs(src_addr.sin_port));
-        close(conn);
+
+        pthread_mutex_lock(&self->conn_mutex);
+        fprintf(stderr, "Enqueuing connection %d\n", conn);
+        enqueue(self->conn_queue, conn);
+        pthread_cond_signal(&self->conn_cond);
+        pthread_mutex_unlock(&self->conn_mutex);
+
     }
 }
 

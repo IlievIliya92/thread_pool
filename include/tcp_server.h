@@ -12,11 +12,13 @@ extern "C" {
 
 /*********************************** TYPEDEFS *********************************/
 typedef struct _tcp_server_t tcp_server_t;
+typedef void (*conn_handler_t)(int conn_fd);
 
 /************************** INTERFACE DATA DEFINITIONS ************************/
 
 /************************* INTERFACE FUNCTION PROTOTYPES **********************/
-tcp_server_t *tcp_server_new(const char *server_iface, int server_port, int workers_n);
+tcp_server_t *tcp_server_new(const char *server_iface, int server_port, int workers_n, 
+    conn_handler_t conn_handler);
 void tcp_server_destroy(tcp_server_t **self_p);
 void tcp_server_run(tcp_server_t *self);
 

@@ -71,7 +71,7 @@ error_t parse_option( int key, char *arg, struct argp_state *state )
 static struct argp argp = {options, parse_option};
 
 /*************************** SERVER CONNECTION CB *****************************/
-static void my_connection_callback(int conn, void *args)
+static void my_connection_callback(int conn)
 {
     int rx_bytes = 0;
     char rx_buffer[1500];
@@ -79,6 +79,7 @@ static void my_connection_callback(int conn, void *args)
     rx_bytes = read(conn, rx_buffer, 1500);
     /* Just loopback */
     write(conn, rx_buffer, rx_bytes);
+    close(conn);
 }
 
 /********************************** MAIN **************************************/
@@ -102,7 +103,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Workers: %d\n", args.workers);
 
     /* Create new instance of a server */
-    tcp_server = tcp_server_new(args.ipv4, args.port, args.workers);
+    tcp_server = tcp_server_new(args.ipv4, args.port, args.workers, my_connection_callback);
     if (tcp_server == NULL)
     {
         fprintf(stderr, "Failed to initialize TCP server\n");

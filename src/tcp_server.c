@@ -224,17 +224,6 @@ tcp_server_run(tcp_server_t *self)
     /* Register the sig handler */
     signal(SIGINT, tcp_server_sig_hndlr);
 
-    /* Set the listening socket to non-blocking mode */
-    int flags = fcntl(self->sock_fd, F_GETFL, 0);
-    if (flags == -1) {
-        perror("fcntl F_GETFL");
-        return;
-    }
-    if (fcntl(self->sock_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-        perror("fcntl F_SETFL O_NONBLOCK");
-        return;
-    }
-
     for (i = 0; i < self->workers_n; i++)
     {
         pthread_create(&self->workers[i], NULL, worker_thread, self);
@@ -244,25 +233,27 @@ tcp_server_run(tcp_server_t *self)
     SERVER_STOP = false;
     for (;;)
     {
+        int ret = 0;
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(self->sock_fd, &read_fds);
+
         if (SERVER_STOP)
         {
             break;
         }
 
+        // select on self->sock_fd only
+        ret = select(self->sock_fd + 1, &read_fds, NULL, NULL, NULL);
+        if (ret < 0) {
+            fprintf(stderr, "Select failed!");
+            continue;
+        }
+
         conn = accept(self->sock_fd, (struct sockaddr *)&src_addr, &src_addr_len);
         if (conn == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                /** No pending connections; sleep briefly to avoid busy loop
-                 * Will fix this later with select/poll/epoll, but for now we just want
-                 * to avoid 100% CPU usage when there are no incoming connections
-                 */
-                usleep(10000); // 10ms
-                continue;
-            } 
-            else {
-                fprintf(stderr, "Failed to accept incoming connection! (%s)\n", strerror(errno));
-                break;
-            }
+            fprintf(stderr, "Failed to accept incoming connection! (%s)\n", strerror(errno));
+            continue;
         }
         fprintf(stderr, "New connection from: %s:%d\n", inet_ntoa(src_addr.sin_addr),
                 ntohs(src_addr.sin_port));

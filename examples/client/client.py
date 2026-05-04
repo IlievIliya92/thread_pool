@@ -2,6 +2,8 @@
 
 # --- Imports --- #
 import sys
+import random
+import string
 import socket
 import argparse
 import threading
@@ -37,19 +39,28 @@ def printout(text, colour=BLACK):
     else:
         print(text)
 
+def generate_random_string(length=1200):
+    characters = string.ascii_letters + string.digits  # a-z, A-Z, 0-9
+    return ''.join(random.choice(characters) for _ in range(length))
+
 def client_thread(name, ipv4, port):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((ipv4, port))
 
-        data = f'Data from client {name}!'
-        printout('__client_%s__ Sending...' % name, YELLOW)
-        s.sendall(data.encode())
-        data = s.recv(1024)
-
-        printout('__client_%s__ Received:' % name, YELLOW)
-        printout(repr(data), YELLOW)
+        data = generate_random_string()
+        o_payload = f'{name} {data}'
+        o_payload_raw = o_payload.encode()
+        printout('__client_%s__ -> %s' % (name, o_payload[:10]), YELLOW)
+        s.sendall(o_payload_raw)
+        i_payload_raw = s.recv(1500)
+        i_payload = i_payload_raw.decode()
+        printout('__client_%s__ <- %s' % (name, i_payload[:10]), YELLOW)
         s.close()
+        if o_payload != i_payload:
+            printout("Data missmatch!", RED)
+            break
+
     except Exception as e:
         printout(str(e), RED)
         ret = -1
